@@ -1,7 +1,10 @@
 streamlit
 earthengine-api
 pandas
-shapely
+numpy
 matplotlib
-reportlab
+shapely
 requests
+reportlab
+scikit-learn
+joblib
