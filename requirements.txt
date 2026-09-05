@@ -4,3 +4,4 @@ pandas
 shapely
 matplotlib
 reportlab
+requests
