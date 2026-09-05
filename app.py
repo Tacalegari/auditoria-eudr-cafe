@@ -272,7 +272,7 @@ tab_ind, tab_lot, tab_vet, tab_esg = st.tabs([
 if "historico_analises" not in st.session_state:
     st.session_state.historico_analises = []
 
-# ABA 1: ANÁLISE INDIVIDUAL
+# ABA 1: ANÁLISE INDIVIDUAL (CAMPO EM BRANCO)
 with tab_ind:
     st.subheader("Análise Cadastral e Espectral por Código do CAR")
     st.write("Insira o código do CAR de qualquer imóvel rural para consulta e emissão imediata da contraprova:")
@@ -281,56 +281,59 @@ with tab_ind:
     with col_c1:
         car_entrada = st.text_input(
             "Código do CAR:",
-            value="MG-3101607-4C0783F404044A14A9B0B7C6BCF126DC",
-            placeholder="Ex.: MG-3101607-... ou SP-3515186-..."
+            value="",
+            placeholder="Digite ou cole o código do CAR aqui (ex.: MG-3101607-...)"
         )
     with col_c2:
         st.write("")
         st.write("")
         btn_analisar = st.button("🔍 Analisar Imóvel", type="primary", use_container_width=True)
 
-    if btn_analisar and car_entrada:
-        with st.spinner("1/2. Conectando à malha SICAR e saneando topologia..."):
-            geom, cod_car, mun_uf, area_ha = consultar_sicar_nacional(car_entrada)
-
-        with st.spinner("2/2. Analisando série temporal Sentinel-2 no Earth Engine..."):
-            v_base, v_min, v_rec, status_texto, parecer = analisar_espectro_satelite(geom, data_iso)
-            graf_buf = plotar_curva_fenologica(cod_car, v_base, v_min, v_rec, data_iso)
-            pdf_buf = emitir_pdf_laudo(cod_car, mun_uf, f"{area_ha:.2f}".replace('.', ','), v_base, v_min, v_rec, status_texto, graf_buf, data_formatada)
-
-        st.session_state.historico_analises.append({
-            "cod_id": cod_car, "mun_uf": mun_uf, "area_ha": area_ha,
-            "v_base": v_base, "v_min": v_min, "v_rec": v_rec,
-            "status": status_texto, "parecer": parecer
-        })
-
-        st.markdown("### Parecer de Conformidade Socioambiental")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Localização", mun_uf)
-        m2.metric("Área Analisada", f"{area_ha:.2f} ha")
-        m3.metric("NDVI Base 2020", f"{v_base:.3f}")
-        m4.metric("NDVI Atual (Vigor)", f"{v_rec:.3f}")
-
-        if parecer == "LIBERADO":
-            st.success(f"**PARECER PERICIAL: {status_texto}** — Imóvel regular perante a EUDR.")
-        elif parecer == "ANÁLISE ADICIONAL":
-            st.warning(f"**PARECER PERICIAL: {status_texto}** — Requer verificação documental.")
+    if btn_analisar:
+        if not car_entrada.strip():
+            st.warning("Por favor, digite ou cole um código de CAR válido para iniciar a análise.")
         else:
-            st.error(f"**PARECER PERICIAL: {status_texto}** — Restrição socioambiental detectada.")
+            with st.spinner("1/2. Conectando à malha SICAR e saneando topologia..."):
+                geom, cod_car, mun_uf, area_ha = consultar_sicar_nacional(car_entrada)
 
-        col_g, col_p = st.columns([2, 1])
-        with col_g:
-            st.image(graf_buf, caption="Dinâmica Temporal de Biomassa (Sentinel-2 MSI)", use_container_width=True)
-        with col_p:
-            st.markdown("#### Laudo Oficial de Contraprova")
-            st.write("Relatório técnico com hash criptográfico SHA-256 para instrução de due diligence e desembaraço aduaneiro.")
-            st.download_button(
-                label="📄 Baixar Relatório Pericial (.PDF)",
-                data=pdf_buf,
-                file_name=f"Laudo_EUDR_{cod_car[:20]}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            with st.spinner("2/2. Analisando série temporal Sentinel-2 no Earth Engine..."):
+                v_base, v_min, v_rec, status_texto, parecer = analisar_espectro_satelite(geom, data_iso)
+                graf_buf = plotar_curva_fenologica(cod_car, v_base, v_min, v_rec, data_iso)
+                pdf_buf = emitir_pdf_laudo(cod_car, mun_uf, f"{area_ha:.2f}".replace('.', ','), v_base, v_min, v_rec, status_texto, graf_buf, data_formatada)
+
+            st.session_state.historico_analises.append({
+                "cod_id": cod_car, "mun_uf": mun_uf, "area_ha": area_ha,
+                "v_base": v_base, "v_min": v_min, "v_rec": v_rec,
+                "status": status_texto, "parecer": parecer
+            })
+
+            st.markdown("### Parecer de Conformidade Socioambiental")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Localização", mun_uf)
+            m2.metric("Área Analisada", f"{area_ha:.2f} ha")
+            m3.metric("NDVI Base 2020", f"{v_base:.3f}")
+            m4.metric("NDVI Atual (Vigor)", f"{v_rec:.3f}")
+
+            if parecer == "LIBERADO":
+                st.success(f"**PARECER PERICIAL: {status_texto}** — Imóvel regular perante a EUDR.")
+            elif parecer == "ANÁLISE ADICIONAL":
+                st.warning(f"**PARECER PERICIAL: {status_texto}** — Requer verificação documental.")
+            else:
+                st.error(f"**PARECER PERICIAL: {status_texto}** — Restrição socioambiental detectada.")
+
+            col_g, col_p = st.columns([2, 1])
+            with col_g:
+                st.image(graf_buf, caption="Dinâmica Temporal de Biomassa (Sentinel-2 MSI)", use_container_width=True)
+            with col_p:
+                st.markdown("#### Laudo Oficial de Contraprova")
+                st.write("Relatório técnico com hash criptográfico SHA-256 para instrução de due diligence e desembaraço aduaneiro.")
+                st.download_button(
+                    label="📄 Baixar Relatório Pericial (.PDF)",
+                    data=pdf_buf,
+                    file_name=f"Laudo_EUDR_{cod_car[:20]}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
 # ABA 2: ANÁLISE EM LOTE
 with tab_lot:
