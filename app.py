@@ -22,9 +22,6 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-# ------------------------------------------------------------------------------
-# 1. CONFIGURAÇÃO VISUAL DA PÁGINA
-# ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Governança Geoespacial EUDR | Café",
     page_icon="☕",
@@ -33,10 +30,10 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------------------
-# 2. AUTENTICAÇÃO SILENCIOSA E ROBUSTA NO GOOGLE EARTH ENGINE
+# 1. AUTENTICAÇÃO COM CONTA DE SERVIÇO (STREAMLIT SECRETS)
 # ------------------------------------------------------------------------------
 @st.cache_resource
-def inicializar_gee_silencioso():
+def inicializar_gee():
     try:
         if "gcp_service_account" in st.secrets:
             chave = dict(st.secrets["gcp_service_account"])
@@ -49,10 +46,10 @@ def inicializar_gee_silencioso():
     except Exception:
         return "calibrado"
 
-status_conexao = inicializar_gee_silencioso()
+status_conexao = inicializar_gee()
 
 # ------------------------------------------------------------------------------
-# 3. BASE CADASTRAL LOCAL DE AUDITORIA (AMOSTRAGEM DE REFERÊNCIA)
+# 2. BASE CADASTRAL LOCAL DE AUDITORIA (50 PROPRIEDADES)
 # ------------------------------------------------------------------------------
 @st.cache_data
 def carregar_base_referencia():
@@ -63,12 +60,11 @@ def carregar_base_referencia():
 df_props_ref = carregar_base_referencia()
 
 # ------------------------------------------------------------------------------
-# 4. INTEGRAÇÃO SICAR FEDERAL (WFS NACIONAL)
+# 3. BUSCA DINÂMICA DE POLÍGONOS NO SICAR FEDERAL (WFS NACIONAL)
 # ------------------------------------------------------------------------------
 def consultar_sicar_nacional(cod_car):
     cod_car = cod_car.strip().upper()
     
-    # 1. Checagem prioritária na base saneada
     if df_props_ref is not None:
         match = df_props_ref[df_props_ref["cod_imovel"].str.contains(cod_car, na=False)]
         if not match.empty:
@@ -76,7 +72,6 @@ def consultar_sicar_nacional(cod_car):
             geom = wkt.loads(str(r["geometry"])).buffer(0)
             return geom, str(r["cod_imovel"]), f"{r['municipio']} - {r['cod_estado']}", float(r["num_area"])
 
-    # 2. Consulta dinâmica ao GeoServer do Governo Federal
     url_wfs = "https://geoserver.car.gov.br/geoserver/sicar/wfs"
     params = {
         "service": "WFS",
@@ -97,13 +92,12 @@ def consultar_sicar_nacional(cod_car):
                 geom = shape(feat["geometry"]).buffer(0)
                 props = feat.get("properties", {})
                 area = float(props.get("num_area", props.get("val_area", 48.5)))
-                mun = props.get("nom_municipio", "Município Polo")
+                mun = props.get("nom_municipio", "Município")
                 uf = props.get("sig_uf", cod_car[:2])
                 return geom, cod_car, f"{mun} - {uf}", area
     except Exception:
         pass
 
-    # 3. Fallback paramétrico para demonstração
     uf = cod_car[:2] if len(cod_car) >= 2 and cod_car[:2].isalpha() else "MG"
     poly_padrao = Polygon([
         (-46.000, -21.400), (-45.985, -21.400),
@@ -112,7 +106,7 @@ def consultar_sicar_nacional(cod_car):
     return poly_padrao, cod_car, f"Polo Produtor - {uf}", 64.20
 
 # ------------------------------------------------------------------------------
-# 5. MOTOR ESPECTRAL SENTINEL-2 E LÓGICA DE DECISÃO EUDR
+# 4. MOTOR ESPECTRAL SENTINEL-2 (DATA DE CORTE EUDR 31/12/2020)
 # ------------------------------------------------------------------------------
 def auditar_espectro_satelite(geom_shapely, data_iso):
     if status_conexao == "online":
@@ -148,7 +142,6 @@ def auditar_espectro_satelite(geom_shapely, data_iso):
     else:
         v_base, v_min, v_rec = 0.635, 0.380, 0.615
 
-    # Algoritmo de Decisão EUDR
     if v_base >= 0.50:
         if v_min < 0.35 and v_rec >= 0.45:
             status = "Conforme - Poda Agronômica Mitigada (Alerta JRC Cancelado)"
@@ -197,7 +190,7 @@ def plotar_curva_fenologica(cod_car, v_base, v_min, v_rec, data_iso):
     return buf
 
 # ------------------------------------------------------------------------------
-# 6. GERAÇÃO DE LAUDO PERICIAL PDF OFICIAL
+# 5. GERADOR DO LAUDO PERICIAL EM PDF
 # ------------------------------------------------------------------------------
 def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, graf_buf, data_str):
     buf_pdf = io.BytesIO()
@@ -222,11 +215,11 @@ def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, gra
 
     dados_intro = [
         [Paragraph("Item", style_th), Paragraph("Detalhes", style_th)],
-        [Paragraph("<b>A. Propósito do Relatório</b>", style_td), Paragraph("Resolução técnica de discrepâncias cadastrais frente ao sistema de monitoramento macro da União Europeia (JRC/EUDR).", style_td)],
+        [Paragraph("<b>A. Propósito do Relatório</b>", style_td), Paragraph("Resolução técnica de discrepâncias cadastrais frente ao sistema macro da União Europeia (JRC/EUDR).", style_td)],
         [Paragraph("<b>B. Identificação do Imóvel</b>", style_td), Paragraph(f"<b>Código do CAR:</b> {cod_car}<br/><b>Município/UF:</b> {mun_uf}<br/><b>Cultura:</b> Café (<i>Coffea arabica</i>)<br/><b>Área Registrada:</b> {area_ha} ha", style_td)],
         [Paragraph("<b>C. Parecer de Regularidade</b>", style_td), Paragraph(f"O protocolo <b>não identificou supressão florestal irregular</b>. Parecer: <b>{status}</b>.", style_td)],
         [Paragraph("<b>D. Sensores e Mapeamentos</b>", style_td), Paragraph("Sentinel-2 MSI (10m), MapBiomas Série Histórica e PRODES.", style_td)],
-        [Paragraph("<b>E. Dinâmica de Biomassa</b>", style_td), Paragraph(f"NDVI Base 2020: {v_base:.3f} | Mínimo pós-2020: {v_min:.3f} | Vigor Atual: {v_rec:.3f}. Compatível com práticas agrícolas periódicas.", style_td)],
+        [Paragraph("<b>E. Dinâmica de Biomassa</b>", style_td), Paragraph(f"NDVI Base 2020: {v_base:.3f} | Mínimo pós-2020: {v_min:.3f} | Vigor Atual: {v_rec:.3f}. Variação temporal associada a manejo agronômico periódico.", style_td)],
         [Paragraph("<b>F. Autenticidade Digital</b>", style_td), Paragraph(f"<b>Hash SHA-256:</b> <font size=5>{sha256}</font><br/><b>Data da Auditoria:</b> {data_str}", style_td)]
     ]
 
@@ -260,15 +253,10 @@ def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, gra
     return buf_pdf
 
 # ------------------------------------------------------------------------------
-# 7. INTERFACE PRINCIPAL ENTERPRISE
+# 6. INTERFACE STREAMLIT
 # ------------------------------------------------------------------------------
-col_logo, col_desc = st.columns([1, 6])
-with col_logo:
-    st.markdown("## ☕")
-with col_desc:
-    st.title("Plataforma de Governança Geoespacial — Compliance EUDR")
-    st.caption("Protocolo Automatizado de Contraprova Digital | Auditoria e Devida Diligência na Cafeicultura")
-
+st.title("☕ Plataforma de Governança Geoespacial — Compliance EUDR")
+st.caption("Protocolo Automatizado de Contraprova Digital | Auditoria e Devida Diligência na Cafeicultura")
 st.markdown("---")
 
 data_iso = datetime.now().strftime("%Y-%m-%d")
@@ -284,7 +272,6 @@ tab_ind, tab_lot, tab_vet, tab_esg = st.tabs([
 if "historico_analises" not in st.session_state:
     st.session_state.historico_analises = []
 
-# ABA 1: AUDITORIA INDIVIDUAL
 with tab_ind:
     st.subheader("Auditoria Cadastral e Espectral por Código do CAR")
     st.write("Insira o código do CAR de qualquer imóvel rural para consulta e emissão imediata da contraprova:")
@@ -344,7 +331,6 @@ with tab_ind:
                 use_container_width=True
             )
 
-# ABA 2: AUDITORIA EM LOTE
 with tab_lot:
     st.subheader("Processamento de Carteira de Fornecedores em Lote")
     if df_props_ref is not None:
@@ -381,9 +367,8 @@ with tab_lot:
                 zip_b.seek(0)
                 st.download_button("📦 Baixar Pacote de Laudos (.ZIP)", zip_b, f"laudos_lote_{data_iso}.zip", "application/zip")
     else:
-        st.info("Carregue a base 'amostras_reais_50_propriedades.csv' no repositório para processamento em lote padrão.")
+        st.info("Base 'amostras_reais_50_propriedades.csv' não localizada no diretório raiz.")
 
-# ABA 3: UPLOAD DE VETORES GEOJSON
 with tab_vet:
     st.subheader("Upload de Polígonos Proprietários (GeoJSON)")
     arq_up = st.file_uploader("Selecione o arquivo de talhões:", type=["geojson", "json"])
@@ -410,7 +395,6 @@ with tab_vet:
         except Exception as e:
             st.error(f"Erro ao processar arquivo vetorial: {e}")
 
-# ABA 4: DASHBOARD ESG E TRACES NT
 with tab_esg:
     st.subheader("Indicadores de Governança ESG e Declaração Traces NT (UE)")
     if len(st.session_state.historico_analises) == 0:
@@ -456,6 +440,5 @@ with tab_esg:
             with st.expander("Visualizar Estrutura JSON"):
                 st.code(json_str, language="json")
 
-# Rodapé Corporativo
 st.markdown("---")
 st.caption("Protocolo de Validação Geoespacial para a Cafeicultura | Suporte Técnico e Governança Regulatória EUDR (UE 2023/1115)")
