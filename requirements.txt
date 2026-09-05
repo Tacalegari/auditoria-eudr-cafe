@@ -1,0 +1,9 @@
+Plaintext
+
+streamlit
+earthengine-api
+pandas
+geopandas
+shapely
+matplotlib
+reportlab
