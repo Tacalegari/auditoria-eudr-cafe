@@ -5,6 +5,7 @@
 
 import os
 import io
+import re
 import json
 import zipfile
 import hashlib
@@ -49,7 +50,7 @@ def inicializar_gee():
 status_conexao = inicializar_gee()
 
 # ------------------------------------------------------------------------------
-# 2. BASE CADASTRAL LOCAL DE REFERÊNCIA (50 PROPRIEDADES)
+# 2. BASE CADASTRAL LOCAL DE REFERÊNCIA
 # ------------------------------------------------------------------------------
 @st.cache_data
 def carregar_base_referencia():
@@ -60,7 +61,7 @@ def carregar_base_referencia():
 df_props_ref = carregar_base_referencia()
 
 # ------------------------------------------------------------------------------
-# 3. BUSCA DINÂMICA DE POLÍGONOS NO SICAR FEDERAL (WFS NACIONAL)
+# 3. BUSCA DINÂMICA DE POLÍGONOS NO SICAR FEDERAL
 # ------------------------------------------------------------------------------
 def consultar_sicar_nacional(cod_car):
     cod_car = cod_car.strip().upper()
@@ -272,7 +273,7 @@ tab_ind, tab_lot, tab_vet, tab_esg = st.tabs([
 if "historico_analises" not in st.session_state:
     st.session_state.historico_analises = []
 
-# ABA 1: ANÁLISE INDIVIDUAL (CAMPO EM BRANCO)
+# ABA 1: ANÁLISE INDIVIDUAL
 with tab_ind:
     st.subheader("Análise Cadastral e Espectral por Código do CAR")
     st.write("Insira o código do CAR de qualquer imóvel rural para consulta e emissão imediata da contraprova:")
@@ -335,46 +336,82 @@ with tab_ind:
                     use_container_width=True
                 )
 
-# ABA 2: ANÁLISE EM LOTE
+# ABA 2: ANÁLISE EM LOTE (PERSONALIZADA POR TEXTO OU ARQUIVO)
 with tab_lot:
     st.subheader("Processamento de Carteira de Fornecedores em Lote")
-    if df_props_ref is not None:
-        qtd = st.slider("Propriedades para análise simultânea:", 5, len(df_props_ref), 10)
-        if st.button("Executar Lote Completo", type="primary"):
-            amostra = df_props_ref.head(qtd).copy()
+    st.write("Cole os códigos dos CARs que você deseja analisar (separados por ponto e vírgula `;` ou quebras de linha) ou envie um arquivo de texto:")
+
+    col_l1, col_l2 = st.columns([2, 1])
+    with col_l1:
+        texto_lote = st.text_area(
+            "Códigos do CAR (separados por ponto e vírgula ';'):",
+            height=130,
+            placeholder="MG-3101607-25DFBC957DA64FB7A49E987E68B8CA06;\nMG-3101607-3D8CE2070A434E1ABB9DB43252FC5711;\nSP-3515186-..."
+        )
+    with col_l2:
+        arq_lote = st.file_uploader("Ou carregue um arquivo .TXT:", type=["txt"])
+
+    lista_cars = []
+    if texto_lote.strip():
+        itens = re.split(r'[;\n,\s]+', texto_lote.strip())
+        lista_cars = [i.strip() for i in itens if len(i.strip()) > 8]
+    elif arq_lote is not None:
+        conteudo = arq_lote.read().decode("utf-8")
+        itens = re.split(r'[;\n,\s]+', conteudo.strip())
+        lista_cars = [i.strip() for i in itens if len(i.strip()) > 8]
+
+    if lista_cars:
+        st.info(f"📋 **{len(lista_cars)}** código(s) de CAR identificado(s) para processamento.")
+
+    if st.button("🚀 Executar Análise do Lote", type="primary"):
+        if not lista_cars:
+            st.warning("Insira ao menos um código de CAR no campo de texto ou carregue um arquivo .TXT.")
+        else:
             res_lote = []
             zip_b = io.BytesIO()
             pbar = st.progress(0)
+            status_p = st.empty()
 
             with zipfile.ZipFile(zip_b, "w", zipfile.ZIP_DEFLATED) as zf:
-                for idx, (_, r) in enumerate(amostra.iterrows()):
-                    geom = wkt.loads(str(r["geometry"])).buffer(0)
-                    mun = f"{r['municipio']} - {r['cod_estado']}"
-                    area = float(r["num_area"])
-                    
+                for idx, cod_atual in enumerate(lista_cars):
+                    status_p.text(f"Processando imóvel {idx+1}/{len(lista_cars)}: {cod_atual[:25]}...")
+                    geom, cid, mun, area = consultar_sicar_nacional(cod_atual)
                     vb, vm, vr, st_t, parc = analisar_espectro_satelite(geom, data_iso)
-                    g_b = plotar_curva_fenologica(r["cod_imovel"], vb, vm, vr, data_iso)
-                    p_b = emitir_pdf_laudo(r["cod_imovel"], mun, f"{area:.2f}".replace('.', ','), vb, vm, vr, st_t, g_b, data_formatada)
+                    g_b = plotar_curva_fenologica(cid, vb, vm, vr, data_iso)
+                    p_b = emitir_pdf_laudo(cid, mun, f"{area:.2f}".replace('.', ','), vb, vm, vr, st_t, g_b, data_formatada)
                     
-                    zf.writestr(f"Laudo_EUDR_{r['cod_imovel'][:20]}.pdf", p_b.getvalue())
-                    item = {"cod_id": r["cod_imovel"], "mun_uf": mun, "area_ha": area, "v_base": vb, "v_min": vm, "v_rec": vr, "status": st_t, "parecer": parc}
+                    zf.writestr(f"Laudo_EUDR_{cid[:22]}.pdf", p_b.getvalue())
+                    item = {"cod_id": cid, "mun_uf": mun, "area_ha": area, "v_base": vb, "v_rec": vr, "parecer": parc, "status": st_t}
                     res_lote.append(item)
                     st.session_state.historico_analises.append(item)
-                    pbar.progress((idx + 1) / qtd)
+                    pbar.progress((idx + 1) / len(lista_cars))
+
+            status_p.empty()
+            st.success(f"✅ Análise concluída com sucesso para todas as {len(lista_cars)} propriedades!")
 
             df_l = pd.DataFrame(res_lote)
             st.dataframe(df_l[["cod_id", "mun_uf", "area_ha", "v_base", "v_rec", "parecer"]])
             
             c_d1, c_d2 = st.columns(2)
             with c_d1:
-                st.download_button("📊 Baixar Planilha Consolidada (.CSV)", df_l.to_csv(index=False, sep=";").encode("utf-8"), f"analise_lote_{data_iso}.csv", "text/csv")
+                st.download_button(
+                    "📊 Baixar Planilha Consolidada (.CSV)", 
+                    df_l.to_csv(index=False, sep=";").encode("utf-8"), 
+                    f"analise_lote_{data_iso}.csv", 
+                    "text/csv", 
+                    use_container_width=True
+                )
             with c_d2:
                 zip_b.seek(0)
-                st.download_button("📦 Baixar Pacote de Laudos (.ZIP)", zip_b, f"laudos_lote_{data_iso}.zip", "application/zip")
-    else:
-        st.info("Base 'amostras_reais_50_propriedades.csv' não localizada no diretório raiz.")
+                st.download_button(
+                    "📦 Baixar Todos os Laudos (.ZIP)", 
+                    zip_b, 
+                    f"laudos_individuais_{data_iso}.zip", 
+                    "application/zip", 
+                    use_container_width=True
+                )
 
-# ABA 3: UPLOAD DE VETORES
+# ABA 3: UPLOAD DE VETORES (GEOJSON)
 with tab_vet:
     st.subheader("Upload de Polígonos Proprietários (GeoJSON)")
     arq_up = st.file_uploader("Selecione o arquivo de talhões:", type=["geojson", "json"])
