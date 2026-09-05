@@ -49,7 +49,7 @@ def inicializar_gee():
 status_conexao = inicializar_gee()
 
 # ------------------------------------------------------------------------------
-# 2. BASE CADASTRAL LOCAL DE AUDITORIA (50 PROPRIEDADES)
+# 2. BASE CADASTRAL LOCAL DE REFERÊNCIA (50 PROPRIEDADES)
 # ------------------------------------------------------------------------------
 @st.cache_data
 def carregar_base_referencia():
@@ -108,7 +108,7 @@ def consultar_sicar_nacional(cod_car):
 # ------------------------------------------------------------------------------
 # 4. MOTOR ESPECTRAL SENTINEL-2 (DATA DE CORTE EUDR 31/12/2020)
 # ------------------------------------------------------------------------------
-def auditar_espectro_satelite(geom_shapely, data_iso):
+def analisar_espectro_satelite(geom_shapely, data_iso):
     if status_conexao == "online":
         try:
             geom_gee = ee.Geometry(geom_shapely.__geo_interface__)
@@ -154,7 +154,7 @@ def auditar_espectro_satelite(geom_shapely, data_iso):
             parecer = "LIBERADO"
     else:
         status = "Em Análise - Cobertura Histórica Baixa"
-        parecer = "AUDITORIA"
+        parecer = "ANÁLISE ADICIONAL"
 
     return v_base, v_min, v_rec, status, parecer
 
@@ -220,7 +220,7 @@ def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, gra
         [Paragraph("<b>C. Parecer de Regularidade</b>", style_td), Paragraph(f"O protocolo <b>não identificou supressão florestal irregular</b>. Parecer: <b>{status}</b>.", style_td)],
         [Paragraph("<b>D. Sensores e Mapeamentos</b>", style_td), Paragraph("Sentinel-2 MSI (10m), MapBiomas Série Histórica e PRODES.", style_td)],
         [Paragraph("<b>E. Dinâmica de Biomassa</b>", style_td), Paragraph(f"NDVI Base 2020: {v_base:.3f} | Mínimo pós-2020: {v_min:.3f} | Vigor Atual: {v_rec:.3f}. Variação temporal associada a manejo agronômico periódico.", style_td)],
-        [Paragraph("<b>F. Autenticidade Digital</b>", style_td), Paragraph(f"<b>Hash SHA-256:</b> <font size=5>{sha256}</font><br/><b>Data da Auditoria:</b> {data_str}", style_td)]
+        [Paragraph("<b>F. Autenticidade Digital</b>", style_td), Paragraph(f"<b>Hash SHA-256:</b> <font size=5>{sha256}</font><br/><b>Data da Análise:</b> {data_str}", style_td)]
     ]
 
     t_intro = Table(dados_intro, colWidths=[150, 370])
@@ -237,7 +237,7 @@ def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, gra
         Spacer(1, 10),
         Paragraph("Metodologia e Fontes de Dados", style_h2),
         Spacer(1, 4),
-        Paragraph("A auditoria vetorial utiliza malhas oficiais auditadas com correção topológica (<i>buffer zero</i>). A análise temporal utiliza dados corrigidos atmosfericamente (BOA) do satélite Sentinel-2.<br/><b>Critério pericial:</b> Comprovação da consolidação do uso agrícola prévio a 31/12/2020 e cancelamento de falsos alertas gerados por podas agronômicas (recepa/esqueletamento).", style_body),
+        Paragraph("A análise vetorial utiliza malhas oficiais checadas com correção topológica (<i>buffer zero</i>). A análise temporal utiliza dados corrigidos atmosfericamente (BOA) do satélite Sentinel-2.<br/><b>Critério pericial:</b> Comprovação da consolidação do uso agrícola prévio a 31/12/2020 e cancelamento de falsos alertas gerados por podas agronômicas (recepa/esqueletamento).", style_body),
         Spacer(1, 10),
         Paragraph("Achados e Evidências Visuais", style_h2),
         Spacer(1, 4),
@@ -256,15 +256,15 @@ def emitir_pdf_laudo(cod_car, mun_uf, area_ha, v_base, v_min, v_rec, status, gra
 # 6. INTERFACE STREAMLIT
 # ------------------------------------------------------------------------------
 st.title("☕ Plataforma de Governança Geoespacial — Compliance EUDR")
-st.caption("Protocolo Automatizado de Contraprova Digital | Auditoria e Devida Diligência na Cafeicultura")
+st.caption("Protocolo Automatizado de Contraprova Digital | Análise e Devida Diligência na Cafeicultura")
 st.markdown("---")
 
 data_iso = datetime.now().strftime("%Y-%m-%d")
 data_formatada = datetime.now().strftime("%d/%m/%Y")
 
 tab_ind, tab_lot, tab_vet, tab_esg = st.tabs([
-    "🔍 Auditoria Individual", 
-    "📦 Auditoria em Lote", 
+    "🔍 Análise Individual", 
+    "📦 Análise em Lote", 
     "📂 Upload de Vetores (GeoJSON)", 
     "📊 Dashboard ESG & Traces NT"
 ])
@@ -272,8 +272,9 @@ tab_ind, tab_lot, tab_vet, tab_esg = st.tabs([
 if "historico_analises" not in st.session_state:
     st.session_state.historico_analises = []
 
+# ABA 1: ANÁLISE INDIVIDUAL
 with tab_ind:
-    st.subheader("Auditoria Cadastral e Espectral por Código do CAR")
+    st.subheader("Análise Cadastral e Espectral por Código do CAR")
     st.write("Insira o código do CAR de qualquer imóvel rural para consulta e emissão imediata da contraprova:")
     
     col_c1, col_c2 = st.columns([3, 1])
@@ -292,8 +293,8 @@ with tab_ind:
         with st.spinner("1/2. Conectando à malha SICAR e saneando topologia..."):
             geom, cod_car, mun_uf, area_ha = consultar_sicar_nacional(car_entrada)
 
-        with st.spinner("2/2. Auditando série temporal Sentinel-2 no Earth Engine..."):
-            v_base, v_min, v_rec, status_texto, parecer = auditar_espectro_satelite(geom, data_iso)
+        with st.spinner("2/2. Analisando série temporal Sentinel-2 no Earth Engine..."):
+            v_base, v_min, v_rec, status_texto, parecer = analisar_espectro_satelite(geom, data_iso)
             graf_buf = plotar_curva_fenologica(cod_car, v_base, v_min, v_rec, data_iso)
             pdf_buf = emitir_pdf_laudo(cod_car, mun_uf, f"{area_ha:.2f}".replace('.', ','), v_base, v_min, v_rec, status_texto, graf_buf, data_formatada)
 
@@ -306,13 +307,13 @@ with tab_ind:
         st.markdown("### Parecer de Conformidade Socioambiental")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Localização", mun_uf)
-        m2.metric("Área Auditada", f"{area_ha:.2f} ha")
+        m2.metric("Área Analisada", f"{area_ha:.2f} ha")
         m3.metric("NDVI Base 2020", f"{v_base:.3f}")
         m4.metric("NDVI Atual (Vigor)", f"{v_rec:.3f}")
 
         if parecer == "LIBERADO":
             st.success(f"**PARECER PERICIAL: {status_texto}** — Imóvel regular perante a EUDR.")
-        elif parecer == "AUDITORIA":
+        elif parecer == "ANÁLISE ADICIONAL":
             st.warning(f"**PARECER PERICIAL: {status_texto}** — Requer verificação documental.")
         else:
             st.error(f"**PARECER PERICIAL: {status_texto}** — Restrição socioambiental detectada.")
@@ -331,10 +332,11 @@ with tab_ind:
                 use_container_width=True
             )
 
+# ABA 2: ANÁLISE EM LOTE
 with tab_lot:
     st.subheader("Processamento de Carteira de Fornecedores em Lote")
     if df_props_ref is not None:
-        qtd = st.slider("Propriedades para auditoria simultânea:", 5, len(df_props_ref), 10)
+        qtd = st.slider("Propriedades para análise simultânea:", 5, len(df_props_ref), 10)
         if st.button("Executar Lote Completo", type="primary"):
             amostra = df_props_ref.head(qtd).copy()
             res_lote = []
@@ -347,7 +349,7 @@ with tab_lot:
                     mun = f"{r['municipio']} - {r['cod_estado']}"
                     area = float(r["num_area"])
                     
-                    vb, vm, vr, st_t, parc = auditar_espectro_satelite(geom, data_iso)
+                    vb, vm, vr, st_t, parc = analisar_espectro_satelite(geom, data_iso)
                     g_b = plotar_curva_fenologica(r["cod_imovel"], vb, vm, vr, data_iso)
                     p_b = emitir_pdf_laudo(r["cod_imovel"], mun, f"{area:.2f}".replace('.', ','), vb, vm, vr, st_t, g_b, data_formatada)
                     
@@ -362,13 +364,14 @@ with tab_lot:
             
             c_d1, c_d2 = st.columns(2)
             with c_d1:
-                st.download_button("📊 Baixar Planilha Consolidada (.CSV)", df_l.to_csv(index=False, sep=";").encode("utf-8"), f"auditoria_lote_{data_iso}.csv", "text/csv")
+                st.download_button("📊 Baixar Planilha Consolidada (.CSV)", df_l.to_csv(index=False, sep=";").encode("utf-8"), f"analise_lote_{data_iso}.csv", "text/csv")
             with c_d2:
                 zip_b.seek(0)
                 st.download_button("📦 Baixar Pacote de Laudos (.ZIP)", zip_b, f"laudos_lote_{data_iso}.zip", "application/zip")
     else:
         st.info("Base 'amostras_reais_50_propriedades.csv' não localizada no diretório raiz.")
 
+# ABA 3: UPLOAD DE VETORES
 with tab_vet:
     st.subheader("Upload de Polígonos Proprietários (GeoJSON)")
     arq_up = st.file_uploader("Selecione o arquivo de talhões:", type=["geojson", "json"])
@@ -377,7 +380,7 @@ with tab_vet:
             dados_geo = json.load(arq_up)
             feicoes = dados_geo.get("features", [])
             st.success(f"Arquivo carregado com sucesso. Polígonos identificados: **{len(feicoes)}**")
-            if st.button("Auditar Polígonos Importados", type="primary"):
+            if st.button("Analisar Polígonos Importados", type="primary"):
                 p_bar = st.progress(0)
                 for i, f in enumerate(feicoes):
                     g = shape(f.get("geometry", {})).buffer(0)
@@ -385,20 +388,21 @@ with tab_vet:
                     cid = str(pr.get("cod_imovel", f"Poligono_{i+1}"))
                     mun = pr.get("municipio", "Talhão Importado")
                     area = float(pr.get("num_area", 35.0))
-                    vb, vm, vr, st_t, parc = auditar_espectro_satelite(g, data_iso)
+                    vb, vm, vr, st_t, parc = analisar_espectro_satelite(g, data_iso)
                     st.session_state.historico_analises.append({
                         "cod_id": cid, "mun_uf": mun, "area_ha": area,
                         "v_base": vb, "v_min": vm, "v_rec": vr, "status": st_t, "parecer": parc
                     })
                     p_bar.progress((i + 1) / len(feicoes))
-                st.success("Polígonos auditados com sucesso!")
+                st.success("Polígonos analisados com sucesso!")
         except Exception as e:
             st.error(f"Erro ao processar arquivo vetorial: {e}")
 
+# ABA 4: DASHBOARD ESG E TRACES NT
 with tab_esg:
     st.subheader("Indicadores de Governança ESG e Declaração Traces NT (UE)")
     if len(st.session_state.historico_analises) == 0:
-        st.info("Nenhuma auditoria realizada na sessão atual. Execute uma análise na Aba 1 ou Aba 2.")
+        st.info("Nenhuma análise realizada na sessão atual. Execute uma análise na Aba 1 ou Aba 2.")
     else:
         df_dash = pd.DataFrame(st.session_state.historico_analises).drop_duplicates(subset=["cod_id"])
         tot_prop = len(df_dash)
@@ -407,7 +411,7 @@ with tab_esg:
         tx_reg = (sum(1 for p in df_dash["parecer"] if p == "LIBERADO") / tot_prop) * 100
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Propriedades Auditadas", f"{tot_prop}")
+        k1.metric("Propriedades Analisadas", f"{tot_prop}")
         k2.metric("Área Mapeada", f"{tot_area:,.1f} ha")
         k3.metric("Área Desembargada EUDR", f"{area_lib:,.1f} ha")
         k4.metric("Conformidade da Carteira", f"{tx_reg:.1f}%")
@@ -418,7 +422,7 @@ with tab_esg:
             st.markdown("#### Matriz de Risco da Carteira")
             fig_p, ax_p = plt.subplots(figsize=(5, 3))
             contagem = df_dash["parecer"].value_counts()
-            cores_map = {"LIBERADO": "#2e7d32", "AUDITORIA": "#fbc02d", "RETIDO": "#d32f2f"}
+            cores_map = {"LIBERADO": "#2e7d32", "ANÁLISE ADICIONAL": "#fbc02d", "RETIDO": "#d32f2f"}
             ax_p.pie(contagem, labels=contagem.index, autopct="%1.1f%%", startangle=90, colors=[cores_map.get(k, "#9e9e9e") for k in contagem.index], wedgeprops=dict(width=0.4, edgecolor='w'))
             ax_p.axis("equal")
             st.pyplot(fig_p)
