@@ -38,27 +38,82 @@ st.set_page_config(
 # ------------------------------------------------------------------------------
 # 1. AUTENTICAÇÃO COM CONTA DE SERVIÇO (STREAMLIT SECRETS)
 # ------------------------------------------------------------------------------
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def inicializar_gee():
+    """Inicializa o Earth Engine sem usar projeto fixo incorreto.
+
+    O projeto de faturamento/quota deve vir de gcp_service_account.project_id
+    ou de GEE_PROJECT_ID no secrets.toml. A conta de serviço ainda precisa ter:
+    - roles/serviceusage.serviceUsageConsumer no projeto;
+    - acesso ao Earth Engine no projeto configurado.
+    """
     try:
-        if "gcp_service_account" in st.secrets:
-            chave = dict(st.secrets["gcp_service_account"])
-            credenciais = ee.ServiceAccountCredentials(
-                chave["client_email"],
-                key_data=chave["private_key"],
+        if "gcp_service_account" not in st.secrets:
+            return False, (
+                "Credenciais ausentes. Configure [gcp_service_account] no "
+                "arquivo .streamlit/secrets.toml."
+            ), None
+
+        chave = dict(st.secrets["gcp_service_account"])
+        campos_obrigatorios = ["client_email", "private_key", "project_id"]
+        faltantes = [campo for campo in campos_obrigatorios if not chave.get(campo)]
+        if faltantes:
+            return False, (
+                "Credenciais incompletas. Campos ausentes: "
+                + ", ".join(faltantes)
+            ), None
+
+        projeto = str(
+            st.secrets.get("GEE_PROJECT_ID", chave["project_id"])
+        ).strip()
+        email_servico = str(chave["client_email"]).strip()
+
+        credenciais = ee.ServiceAccountCredentials(
+            email_servico,
+            key_data=chave["private_key"],
+        )
+        ee.Initialize(credenciais, project=projeto)
+
+        # Teste real para detectar permissão IAM durante a inicialização.
+        ee.Number(1).getInfo()
+
+        return True, "Google Earth Engine conectado.", {
+            "projeto": projeto,
+            "conta_servico": email_servico,
+        }
+
+    except Exception as erro:
+        texto = str(erro)
+        texto_inferior = texto.lower()
+
+        if (
+            "serviceusage.services.use" in texto_inferior
+            or "serviceusageconsumer" in texto_inferior
+            or "does not have required permission" in texto_inferior
+        ):
+            mensagem = (
+                "A conta de serviço foi reconhecida, mas não pode consumir as APIs "
+                "do projeto. No Google Cloud IAM, conceda à conta de serviço o papel "
+                "Service Usage Consumer (roles/serviceusage.serviceUsageConsumer) "
+                "no projeto configurado. Depois, aguarde a propagação e reinicie o app."
             )
-            ee.Initialize(
-                credenciais,
-                project=chave.get("project_id", "cogent-script-449412-s4"),
+        elif "earth engine" in texto_inferior and "not registered" in texto_inferior:
+            mensagem = (
+                "O projeto configurado ainda não está registrado/habilitado para o "
+                "Google Earth Engine. Registre o projeto e habilite a Earth Engine API."
+            )
+        elif "invalid grant" in texto_inferior or "invalid jwt" in texto_inferior:
+            mensagem = (
+                "A chave da conta de serviço é inválida ou expirou. Revise client_email, "
+                "private_key e a formatação multilinha do secrets.toml."
             )
         else:
-            ee.Initialize(project="cogent-script-449412-s4")
-        return True, "Google Earth Engine conectado."
-    except Exception as erro:
-        return False, f"Falha ao conectar ao Google Earth Engine: {erro}"
+            mensagem = f"Falha ao conectar ao Google Earth Engine: {texto}"
+
+        return False, mensagem, None
 
 
-gee_online, mensagem_gee = inicializar_gee()
+gee_online, mensagem_gee, detalhes_gee = inicializar_gee()
 
 
 # ------------------------------------------------------------------------------
@@ -635,9 +690,24 @@ st.title("☕ Plataforma de Governança Geoespacial — Compliance EUDR")
 st.caption("Protocolo automatizado de apoio à análise e devida diligência na cafeicultura")
 
 if gee_online:
-    st.success("Google Earth Engine conectado.")
+    st.success(mensagem_gee)
+    if detalhes_gee:
+        st.caption(
+            f"Projeto GEE: {detalhes_gee['projeto']} | "
+            f"Conta de serviço: {detalhes_gee['conta_servico']}"
+        )
 else:
     st.error(mensagem_gee)
+    with st.expander("Como corrigir a autenticação"):
+        st.markdown(
+            "1. Confirme o `project_id` no `secrets.toml`.\n"
+            "2. No IAM desse projeto, adicione o papel "
+            "`roles/serviceusage.serviceUsageConsumer` à conta indicada em "
+            "`client_email`.\n"
+            "3. Confirme que a Earth Engine API está habilitada e que o projeto "
+            "está registrado no Earth Engine.\n"
+            "4. Reinicie o aplicativo após a propagação da permissão."
+        )
 
 if df_props_ref is None and not obter_url_wfs():
     st.warning(
